@@ -47,12 +47,15 @@ if os.name == "nt":
     _k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
     _k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
 
-    def _make_job():
+    def _make_job(affinity=None):
         job = _k32.CreateJobObjectW(None, None)     # no security attributes: the handle is not inherited
         if not job:
             return None
         info = _ExtendedLimits()
         info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if affinity is not None:
+            info.BasicLimitInformation.LimitFlags |= 0x10  # JOB_OBJECT_LIMIT_AFFINITY
+            info.BasicLimitInformation.Affinity = affinity
         if not _k32.SetInformationJobObject(job, _JobObjectExtendedLimitInformation, ctypes.byref(info),
                                             ctypes.sizeof(info)):
             _k32.CloseHandle(job)
@@ -89,14 +92,18 @@ def terminate() -> bool:
     return bool(_k32.TerminateJobObject(_job, 1))
 
 
-def contain(proc) -> bool:
+def contain(proc, affinity=None) -> bool:
     """Put a started subprocess.Popen in the kill-on-close job. True if it is in; False (harmlessly) otherwise."""
     global _job
     if os.name != "nt" or proc is None:
         return False
+    if affinity is not None:
+        affinity = int(affinity, 0)
+        if not 0 < affinity < (1 << (ctypes.sizeof(ctypes.c_size_t) * 8)):
+            raise ValueError("invalid job affinity mask")
     with _lock:
         if _job is None:
-            _job = _make_job() or 0
+            _job = _make_job(affinity) or 0
         if not _job:
             return False
     try:

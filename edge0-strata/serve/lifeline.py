@@ -281,6 +281,9 @@ def popen(args, role: str = "engine", **kw) -> subprocess.Popen:
     It also leaves a record (strata_control/procs.py) so that, if everything here dies anyway, the next start can
     find this process by PID, start time and command line and end it."""
     how = mechanism()
+    affinity = (kw.get("env") or {}).get("STRATA_JOB_AFFINITY")
+    if affinity and how != "job":
+        raise RuntimeError("engine CPU job affinity requires Windows job containment")
     isolate = role in ISOLATED_ROLES
     if isolate and os.name == "nt":
         kw["creationflags"] = kw.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
@@ -293,7 +296,14 @@ def popen(args, role: str = "engine", **kw) -> subprocess.Popen:
     else:
         child = subprocess.Popen(args, **kw)
         if how == "job":
-            winjob.contain(child)
+            try:
+                contained = winjob.contain(child, affinity=affinity)
+                if affinity and not contained:
+                    raise RuntimeError("could not apply engine CPU job affinity")
+            except Exception:
+                child.terminate()
+                child.wait()
+                raise
         else:
             _watch(child)
     if isinstance(child, _REAL_POPEN):
