@@ -4707,6 +4707,16 @@ class Service:
             except (ValueError, EngineDied) as e:
                 print(f"[strata] the VRAM reserve ({self.vram_reserve} MiB) was not applied: {e}", flush=True)
 
+    def apply_startup_reserve(self, cfg: dict) -> None:
+        reserve = cfg.get("vram_startup_reserve_mib")
+        if reserve is None:
+            return
+        if isinstance(reserve, bool) or not isinstance(reserve, int) or reserve < 0:
+            raise ValueError("vram_startup_reserve_mib must be a non-negative whole number of MiB")
+        if cfg.get("vram_elastic") is not True:
+            raise ValueError("vram_startup_reserve_mib needs vram_elastic: true")
+        self.vram(reserve)
+
     vram_wait_s = 300.0                                  # #533: how long POST /v1/vram waits for a running request
 
     def vram(self, reserve_mib: int | None) -> dict:
@@ -9301,6 +9311,10 @@ def main(argv=None, *, lifecycle_event=None, interrupt_exit_code: int = 0) -> in
                   model_name=default_model_name(cfg), vision=vision,
                   sampling_defaults=sampling_defaults,
                   fit_max_tokens=a.fit_max_tokens or (not a.no_fit_max_tokens and cfg.get("fit_max_tokens") is not False))
+    try:
+        svc.apply_startup_reserve(cfg)
+    except (ValueError, EngineDied) as e:
+        raise SystemExit(f"[strata] startup VRAM reserve: {e}")
     svc.launch_attestation = launch_attestation
     if (cfg.get("arch") or "") == "deepseek41" and vision is None and a.engine == "strata":
         # DeepSeek-V4.1 reads pictures with the engine's own tower (--vision on, the default): no separate reader process.

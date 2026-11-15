@@ -131,6 +131,23 @@ class Route(unittest.TestCase):
         self.assertEqual(self.request("/v1/load", {})[0], 200)
         self.assertEqual(self.engine.calls, [5000])
 
+    def test_startup_reserve_for_loaded_and_unloaded_engines(self):
+        cfg = {"vram_elastic": True, "vram_startup_reserve_mib": 1280}
+        self.svc.apply_startup_reserve({})
+        self.assertEqual(self.engine.calls, [])
+        self.svc.apply_startup_reserve(cfg)
+        self.assertEqual(self.engine.calls, [])
+        self.assertEqual(self.request("/v1/load", {})[0], 200)
+        self.assertEqual(self.engine.calls, [1280])
+        self.assertEqual(self.svc._engine_reserve(), 1280)
+        self.svc.apply_startup_reserve(cfg)
+        self.assertEqual(self.engine.calls, [1280, 1280])
+        for bad in (-1, True, "1280"):
+            with self.assertRaises(ValueError):
+                self.svc.apply_startup_reserve({**cfg, "vram_startup_reserve_mib": bad})
+        with self.assertRaises(ValueError):
+            self.svc.apply_startup_reserve({**cfg, "vram_elastic": False})
+
 
 if __name__ == "__main__":
     unittest.main()
