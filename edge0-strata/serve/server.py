@@ -4189,6 +4189,13 @@ class Service:
         self.config_effort = None                     # #1641: the config's "reasoning_effort": the level for requests with none
         self.keep_awake = None                        # #1727 (opt-in): serve.keepawake.KeepAwake, the config's "prevent_sleep"
         self.fifo = threading.Lock()
+        # Parallel (--batch) requests do not take self.fifo, so the fifo alone no longer keeps an image encode off the
+        # GPU while text generates (an encode during a running request hangs it, see prepare()).  The image turn
+        # (_turn, _vision_idle_down) sets image_turn and waits for par_active == 0; a parallel request waits while
+        # image_turn is set before it counts itself in par_active (_par_enter).
+        self.gen_gate = threading.Condition()
+        self.par_active = 0
+        self.image_turn = False
         self.slot_save_path = None                    # --slot-save-path: /slots/0?action=save|restore (off when None)
         self.embeddings = threading.local()           # the current request's image embeddings file (GENI)
         self.api_key = ""                              # when set, /v1/* needs it (Bearer or x-api-key)
@@ -4572,6 +4579,11 @@ class Service:
             return "busy"
         if not self.fifo.acquire(blocking=False):
             return "busy"
+        with self.gen_gate:
+            if self.par_active:             # parallel requests do not hold the fifo
+                self.fifo.release()
+                return "busy"
+            self.image_turn = True
         try:
             v.unload()
             back = ""
@@ -4585,6 +4597,9 @@ class Service:
             self.vision_held = False
             return "down"
         finally:
+            with self.gen_gate:
+                self.image_turn = False
+                self.gen_gate.notify_all()
             self.fifo.release()
 
     def start_vision_idle(self):
@@ -5150,9 +5165,39 @@ class Service:
                 if cancel.is_set():
                     raise ClientGone()
         try:
+            with self.gen_gate:
+                self.image_turn = True          # new parallel requests wait from here on
+                while self.par_active:
+                    if cancel is not None and cancel.is_set():
+                        raise ClientGone()
+                    self.gen_gate.wait(0.25)
             yield
         finally:
+            with self.gen_gate:
+                self.image_turn = False
+                self.gen_gate.notify_all()
             self.fifo.release()
+
+    def _par_enter(self, cancel, turn):
+        """A parallel request's entry to the engine: wait while an image turn runs (keep-alive pings as for the fifo),
+        then count itself in par_active until `turn` closes."""
+        while True:
+            with self.gen_gate:
+                if not self.image_turn:
+                    self.par_active += 1
+                    break
+                self.gen_gate.wait(QUEUE_BEAT_S)
+                if not self.image_turn:
+                    continue
+            if cancel.is_set():
+                raise QueueCancelled("the client disconnected while waiting for the engine")
+            yield "ping", None
+        turn.callback(self._par_exit)
+
+    def _par_exit(self):
+        with self.gen_gate:
+            self.par_active -= 1
+            self.gen_gate.notify_all()
 
     def _note_unreadable_tool_images(self, messages, cancel=None):
         """A picture a tool returned (Claude Code's Read of an image file) that this server cannot read - it has no
@@ -5642,6 +5687,8 @@ class Service:
                     elif not (self.loaded() and not self._vision_down()):
                         with self._inference_fifo(deadline, cancel):
                             self.ensure_loaded()
+                    if par:
+                        yield from self._par_enter(cancel, turn)   # not on the GPU while an image encodes
                     with self.status_lock:
                         if par:
                             self.status["queued"] -= 1
