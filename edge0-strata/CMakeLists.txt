@@ -2610,6 +2610,11 @@ if(STRATA_NATIVE_EXPERTS)
     target_include_directories(latent_module_verify PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(latent_module_verify PRIVATE strata_engine strata_kernels strata_kernels_cpu CUDA::cudart)
 
+    add_executable(mapped_copy_check src/kernels/mapped_copy_check.cpp)
+    target_include_directories(mapped_copy_check PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(mapped_copy_check PRIVATE strata_kernels CUDA::cudart)
+    add_test(NAME mapped_copy_check COMMAND mapped_copy_check)
+
     add_executable(latent_u_check src/kernels/latent_u_check.cpp src/core/latent_dense.cpp)
     target_include_directories(latent_u_check PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_link_libraries(latent_u_check PRIVATE strata_engine strata_kernels CUDA::cudart)

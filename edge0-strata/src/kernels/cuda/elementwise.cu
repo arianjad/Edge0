@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace strata::kernels {
 namespace {
@@ -287,6 +288,16 @@ __global__ void copy_bytes16_from_mapped_kernel(uint4* __restrict__ dst, const v
         dst[i] = v;
     }
 }
+#if !defined(__HIPCC__)
+__global__ void copy_latent_activations_to_mapped_kernel(uint4* dst, const uint4* src, int64_t n) {
+    const int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        dst[i] = src[i];
+        __threadfence_system();   // Each writer orders its stores before the later ready flag.
+    }
+}
+#endif
+
 __global__ void copy_bytes_from_mapped_kernel(uint8_t* __restrict__ dst, const volatile uint8_t* src, int64_t n) {
     const int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) dst[i] = const_cast<const uint8_t*>(src)[i];
@@ -305,6 +316,33 @@ void copy_bytes_from_mapped(void* dst, const void* src, int64_t bytes, void* str
     }
     check_launch("copy_bytes_from_mapped");
 }
+bool copy_latent_activations_to_host(void* compact_dst, const void* compact_src, int64_t compact_bytes,
+                                     void* f32_dst, const void* f32_src, int64_t f32_bytes,
+                                     bool kernel_candidate, void* stream) {
+    const auto cs = (cudaStream_t) stream;
+#if !defined(__HIPCC__)
+    const char* mode = std::getenv("STRATA_LATENT_HOST_COPY");
+    if (kernel_candidate && mode != nullptr && std::strcmp(mode, "kernel") == 0 &&
+        std::getenv("STRATA_ACT_FALLBACK") == nullptr && std::getenv("STRATA_ACT_CHECK") == nullptr &&
+        compact_dst != nullptr && compact_src != nullptr && compact_bytes > 0 &&
+        ((compact_bytes | (uintptr_t) compact_dst | (uintptr_t) compact_src) & 15) == 0) {
+        const int64_t n = compact_bytes / 16;
+        copy_latent_activations_to_mapped_kernel<<<grid_for(n), THREADS, 0, cs>>>(
+            (uint4*) compact_dst, (const uint4*) compact_src, n);
+        if (cudaGetLastError() != cudaSuccess) return false;
+        [[maybe_unused]] static const bool announced = [] {
+            std::fprintf(stderr, "strata verify: mapped Q8_0 latent activation copy enabled for two-chat batch windows\n");
+            return true;
+        }();
+        return true;
+    }
+#else
+    (void) kernel_candidate;
+#endif
+    return cudaMemcpyAsync(compact_dst, compact_src, (size_t) compact_bytes, cudaMemcpyDeviceToHost, cs) == cudaSuccess &&
+           cudaMemcpyAsync(f32_dst, f32_src, (size_t) f32_bytes, cudaMemcpyDeviceToHost, cs) == cudaSuccess;
+}
+
 void copy_rows_from_mapped(float* dst, const float* src, int64_t rows, int64_t width, const int32_t* hit_rows,
                            const int32_t* count, void* stream) {
     if (rows <= 0) return;

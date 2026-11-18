@@ -149,6 +149,11 @@ void copy_i32_from_mapped(int32_t* dst, const int32_t* src, int64_t n, void* str
 /// knife-0: copy `bytes` from mapped host memory to device memory with a KERNEL (no host CUDA call in a verify
 /// window - the host-issued cudaMemcpyAsync there is the issue #31 deadlock).  16-byte words when both sides allow.
 void copy_bytes_from_mapped(void* dst, const void* src, int64_t bytes, void* stream);
+
+/// Stage the CPU experts' latent activations before publishing their ready flag on the same stream.
+bool copy_latent_activations_to_host(void* compact_dst, const void* compact_src, int64_t compact_bytes,
+                                     void* f32_dst, const void* f32_src, int64_t f32_bytes,
+                                     bool kernel_candidate, void* stream);
 /// Up to 8 copies from mapped host memory in one launch: `words` 4-byte words each (16 bytes a load where both
 /// ends are 16-byte aligned and the count a multiple of 4).  Graph-capturable.
 struct MappedCopy {

@@ -2188,16 +2188,18 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             if (const float* inv = strata::kernels::lat_gu_colscale_dev((int) l, (int) lat_ELL_))
                 strata::kernels::lat_colscale_rows(lat_xl_, (int64_t) T * (int64_t) lat_G_, (int) lat_ELL_, inv, cs);
             quantize_q8_1_rows(lat_xl_, T * lat_G_, (int) lat_ELL_, lat_xlq_, cs);
-            // DESIGN-4 + the write-path cut: quantize into a DEVICE buffer, then the copy engine
-            // lands it in mapped host memory (async, off the compute stream's serial chain - the
-            // same path the f32 rows take).  Bit-exact to the host's from_float (probe_std); the
-            // xlseq doorbell after both copies covers it.
             quantize_q8_0_rows(lat_xl_, (long long) T * lat_G_, (long long) lat_ELL_, lat_act0_dev_, cs);
-            cudaMemcpyAsync(m_latact0_, lat_act0_dev_,
-                            (size_t) T * (size_t) lat_G_ * ((size_t) lat_ELL_ / 32) * 34,
-                            cudaMemcpyDeviceToHost, cs);
-            cudaMemcpyAsync(m_latxlq_, lat_xl_, (size_t) T * (size_t) lat_G_ * (size_t) lat_ELL_ * 4,
-                            cudaMemcpyDeviceToHost, cs);
+            const auto& fmt = strata::kernels::cpu::expert_layout().fmt[(size_t) l];
+            const int64_t q8_row_bytes = (int64_t) (lat_ELL_ / 32) * 34;
+            const bool kernel_candidate = batch_rec_ && T == 4 && slots_.size() == 2 && lb_ == 0 && le_ == g.n_layers &&
+                                          !ar_on() && !device_plan_ && fmt.gu_type == strata::kernels::cpu::kNvfp4Type &&
+                                          fmt.act_bytes == (size_t) q8_row_bytes;
+            if (!copy_latent_activations_to_host(m_latact0_, lat_act0_dev_, (int64_t) T * lat_G_ * q8_row_bytes,
+                                                  m_latxlq_, lat_xl_, (int64_t) T * lat_G_ * lat_ELL_ * 4,
+                                                  kernel_candidate, cs)) {
+                err = "verify: could not enqueue the latent host activation copy";
+                return false;
+            }
             if (trace_m_ != nullptr) gpu_stamp(trace_m_, (l * kProfPer + 35) * 2, cs);   // K0-probe: D2H done
             doorbell_publish_value(nullptr, nullptr, nullptr, 0, 0, nullptr, nullptr, nullptr,
                                    (uint32_t*) m_xlseq_, (uint32_t) l + 1, cs);
