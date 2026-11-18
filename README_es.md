@@ -315,11 +315,45 @@ curl localhost:8000/v1/chat/completions -H 'content-type: application/json' -d '
 </details>
 
 <details>
+<summary>Dos GPU · la capa de expertos de la segunda tarjeta</summary>
+
+Una segunda tarjeta NVIDIA guarda los expertos que no caben en la VRAM de la primera, y la decodificación la usa con ambos formatos de expertos. Las tarjetas no necesitan NVLink ni P2P.
+
+`edge0-infer` ejecuta el motor en una tarjeta (su `--device` es una tarjeta), así que con dos tarjetas hay que iniciar el motor con la configuración que lee `serve/server.py --config` (contiene `exe`, `args`, `cwd`, `env`):
+
+- pon `"gpu": [0, 1]` — el dispositivo 0 del motor es la primera tarjeta y el 1 la segunda;
+- añade al final de `"args"`: `"--peer-device", "1", "--peer-reserve-mib", "1024", "--peer-slots", "0"`.
+
+```bash
+cd /path/to/Edge0-145B-q3k
+/path/to/edge0-strata/.venv/bin/python /path/to/edge0-strata/serve/server.py \
+  --engine strata --config ./model-two-gpus.json
+```
+
+El registro de arranque muestra la capa de la segunda tarjeta (`peer GPU 1: … experts, … GiB`), y el servidor atiende los mismos endpoints que con una tarjeta. `--peer-device` no se puede combinar con `--layer-split` ni con `--expert-cache-device1..3`. Más: [Dos GPU](edge0-strata/EDGE0.md#two-gpus-linux-nvidia).
+
+</details>
+
+<details>
 <summary>Aplicación de escritorio · Windows · macOS</summary>
 
 ⬇️ **Descargar:** **[GitHub Releases](https://github.com/Edge0-AI/Edge0/releases)**
 
-Abre **Edge0 Chat** en Windows o macOS (Apple Silicon) y selecciona una carpeta de modelo, como `Edge0-145B-q3k`, para ejecutarlo localmente. Para compilar la aplicación desde el código fuente, sigue la guía de [Edge0 Chat](edge0-infer/examples/desktop/README.md).
+Abre **Edge0 Chat** en Windows o macOS (Apple Silicon). En **Models**, descarga un modelo desde Hugging Face o ModelScope, o añade una carpeta de modelo que ya tengas, como `Edge0-145B-q3k`, y cárgalo para ejecutarlo localmente. En macOS la aplicación solo ofrece y ejecuta los modelos Q3_K. Para compilar la aplicación desde el código fuente, sigue la guía de [Edge0 Chat](edge0-infer/examples/desktop/README.md).
+
+</details>
+
+<details>
+<summary>Imágenes · visión</summary>
+
+`mmproj-BF16.gguf`, en la carpeta del modelo, es el codificador de visión. Añade esto al `model.json` del modelo, junto a `args`:
+
+```json
+"vision": {"exe": "/path/to/strata-vision", "mmproj": "./mmproj-BF16.gguf",
+           "model": "./model-skeleton.gguf", "gpu": false}
+```
+
+y `--vision` a `"args"`. `strata-vision` no está en este repositorio: `setup.py --setup --vision yes` lo descarga, o compila `tools/vision` en un checkout de Strata. El registro dirá `images on`; envía una imagen con `/image` en el chat o con una parte `image_url` por la API de OpenAI.
 
 </details>
 
@@ -387,8 +421,6 @@ cd edge0-infer
 cmake --preset cpu && cmake --build --preset cpu
 ctest --preset cpu -L "L0|L1"
 ```
-
-Para cambios en `edge0-infer/`, abre issues y PR en este repositorio como de costumbre. Ese directorio se desarrolla en otro repositorio; los mantenedores aplican primero allí los cambios aceptados y llegan aquí con la siguiente sincronización. Consulta [CONTRIBUTING](CONTRIBUTING.md).
 
 Flujo: fork → rama de funcionalidad → PR dirigido a `main`. Mantén las pruebas aprobadas y añade pruebas para los comportamientos nuevos.
 
