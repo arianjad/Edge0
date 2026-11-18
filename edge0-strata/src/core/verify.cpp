@@ -2191,7 +2191,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             quantize_q8_0_rows(lat_xl_, (long long) T * lat_G_, (long long) lat_ELL_, lat_act0_dev_, cs);
             const auto& fmt = strata::kernels::cpu::expert_layout().fmt[(size_t) l];
             const int64_t q8_row_bytes = (int64_t) (lat_ELL_ / 32) * 34;
-            const bool kernel_candidate = batch_rec_ && T == 4 && slots_.size() == 2 && lb_ == 0 && le_ == g.n_layers &&
+            const bool kernel_candidate = G == 1 && lb_ == 0 && le_ == g.n_layers &&
                                           !ar_on() && !device_plan_ && fmt.gu_type == strata::kernels::cpu::kNvfp4Type &&
                                           fmt.act_bytes == (size_t) q8_row_bytes;
             if (!copy_latent_activations_to_host(m_latact0_, lat_act0_dev_, (int64_t) T * lat_G_ * q8_row_bytes,

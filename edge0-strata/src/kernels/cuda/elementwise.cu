@@ -331,7 +331,7 @@ bool copy_latent_activations_to_host(void* compact_dst, const void* compact_src,
             (uint4*) compact_dst, (const uint4*) compact_src, n);
         if (cudaGetLastError() != cudaSuccess) return false;
         [[maybe_unused]] static const bool announced = [] {
-            std::fprintf(stderr, "strata verify: mapped Q8_0 latent activation copy enabled for two-chat batch windows\n");
+            std::fprintf(stderr, "strata verify: mapped Q8_0 latent activation copy enabled for eligible latent windows\n");
             return true;
         }();
         return true;

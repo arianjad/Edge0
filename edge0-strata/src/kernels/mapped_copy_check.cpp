@@ -31,9 +31,10 @@ void set_env(const char* name, const char* value) {
 
 }  // namespace
 
-int main() {
-    constexpr int rows = 4 * 8, width = 1792;
-    constexpr int compact_bytes = rows * (width / 32) * 34, f32_bytes = rows * width * 4;
+int check_shape(int tokens) {
+    constexpr int width = 1792;
+    const int rows = tokens * 8;
+    const int compact_bytes = rows * (width / 32) * 34, f32_bytes = rows * width * 4;
     constexpr uint8_t poison = 0xe5;
     std::vector<uint8_t> compact_ref(compact_bytes), f32_ref(f32_bytes);
     for (size_t i = 0; i < compact_ref.size(); ++i) compact_ref[i] = (uint8_t) (13 * i + 5);
@@ -114,5 +115,13 @@ int main() {
     check(cudaFreeHost(compact_host));
     check(cudaFree(f32_src));
     check(cudaFree(compact_src));
-    std::puts("mapped latent activation copy OK (5 paths, 64 replays each, including fallback and reference check)");
+    std::printf("mapped latent activation copy OK: %d token rows, 5 paths, 64 replays each\n", tokens);
+    return 0;
+}
+
+int main() {
+    for (int tokens = 1; tokens <= 8; ++tokens) {
+        if (check_shape(tokens) != 0) return 1;
+    }
+    std::puts("mapped latent activation copy OK (2560 checks, including fallback and reference check)");
 }
